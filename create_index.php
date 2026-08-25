@@ -9,6 +9,7 @@ if (!is_dir($uploads_dir)) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_builder'])) {
     $fields = $_POST['fields'] ?? [];
     $clean_fields = array_values(array_filter(array_map('trim', $fields)));
+    $system_name = !empty($_POST['system_name']) ? trim($_POST['system_name']) : 'Management System';
 
     // Process optional header logo (File OR URL)
     $system_logo = '';
@@ -45,22 +46,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_builder'])) {
         $columns[] = '"' . str_replace('"', '""', $field) . '" TEXT';
     }
 
-    $query = 'CREATE TABLE IF NOT EXISTS students (' . implode(', ', $columns) . ');';
+    $query = 'CREATE TABLE IF NOT EXISTS records (' . implode(', ', $columns) . ');';
     $db->exec($query);
     $db->close();
 
     // 2. GENERATE INDEX.PHP
     $schema_export = var_export($clean_fields, true);
     $logo_export = var_export($system_logo, true);
+    $name_export = var_export($system_name, true);
 
     $index_code = '<?php
 header("Content-Type: text/html; charset=utf-8");
 $db = new SQLite3(__DIR__ . "/database.db");
 $db->exec("PRAGMA encoding = \"UTF-8\";");
 
+$SYSTEM_NAME = ' . $name_export . ';
 $SCHEMA_FIELDS = ' . $schema_export . ';
 $SYSTEM_LOGO = ' . $logo_export . ';
 $error = "";
+
+// Auto-create table if missing
+$cols = [
+    \'id INTEGER PRIMARY KEY AUTOINCREMENT\',
+    \'avatar TEXT\',
+    \'created_at DATETIME DEFAULT CURRENT_TIMESTAMP\'
+];
+foreach ($SCHEMA_FIELDS as $field) {
+    $cols[] = \'"\' . str_replace(\'"\', \'""\', $field) . \'" TEXT\';
+}
+$db->exec(\'CREATE TABLE IF NOT EXISTS records (\' . implode(\', \', $cols) . \');\');
 
 // Helper to remove local server files safely
 function removeImageFile($path) {
@@ -74,7 +88,7 @@ function removeImageFile($path) {
 
 // ---------------- Handle EXCEL (.xls) EXPORT ----------------
 if (isset($_GET["action"]) && $_GET["action"] === "export") {
-    $filename = "students_export_" . date("Y-m-d_H-i-s") . ".xls";
+    $filename = "export_" . date("Y-m-d_H-i-s") . ".xls";
     
     header("Content-Type: application/vnd.ms-excel; charset=utf-8");
     header("Content-Disposition: attachment; filename=" . $filename);
@@ -98,7 +112,7 @@ if (isset($_GET["action"]) && $_GET["action"] === "export") {
           <Alignment ss:Vertical="Center"/>
         </Style>
       </Styles>
-      <Worksheet ss:Name="Students">
+      <Worksheet ss:Name="Records">
         <Table>
           <Row ss:StyleID="Header">
             <Cell><Data ss:Type="String">ID</Data></Cell>
@@ -109,7 +123,7 @@ if (isset($_GET["action"]) && $_GET["action"] === "export") {
             <Cell><Data ss:Type="String">Created At</Data></Cell>
           </Row>
           <?php
-          $results = $db->query("SELECT * FROM students ORDER BY id ASC");
+          $results = $db->query("SELECT * FROM records ORDER BY id ASC");
           while ($row = $results->fetchArray(SQLITE3_ASSOC)):
               $img_display = $row["avatar"] ?? "";
               $is_url = (strpos($img_display, "http://") === 0 || strpos($img_display, "https://") === 0);
@@ -142,14 +156,14 @@ if (isset($_GET["action"]) && $_GET["action"] === "export") {
 if (isset($_GET["action"]) && $_GET["action"] === "delete" && isset($_GET["id"])) {
     $id = (int)$_GET["id"];
     
-    $stmt = $db->prepare("SELECT avatar FROM students WHERE id = :id");
+    $stmt = $db->prepare("SELECT avatar FROM records WHERE id = :id");
     $stmt->bindValue(":id", $id, SQLITE3_INTEGER);
     $res = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     
     if ($res) {
         removeImageFile($res["avatar"]);
         
-        $del_stmt = $db->prepare("DELETE FROM students WHERE id = :id");
+        $del_stmt = $db->prepare("DELETE FROM records WHERE id = :id");
         $del_stmt->bindValue(":id", $id, SQLITE3_INTEGER);
         $del_stmt->execute();
     }
@@ -167,7 +181,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"])) {
     // Fetch existing record if updating
     $existing = null;
     if ($action === "update" && $record_id > 0) {
-        $stmt = $db->prepare("SELECT * FROM students WHERE id = :id");
+        $stmt = $db->prepare("SELECT * FROM records WHERE id = :id");
         $stmt->bindValue(":id", $record_id, SQLITE3_INTEGER);
         $existing = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         $avatar_path = $existing["avatar"] ?? "";
@@ -226,7 +240,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"])) {
                 $params[$param_key] = $_POST[$field] ?? "";
             }
 
-            $stmt = $db->prepare("INSERT INTO students (" . implode(", ", $cols) . ") VALUES (" . implode(", ", $vals) . ")");
+            $stmt = $db->prepare("INSERT INTO records (" . implode(", ", $cols) . ") VALUES (" . implode(", ", $vals) . ")");
             foreach ($params as $key => $val) {
                 $stmt->bindValue($key, $val, SQLITE3_TEXT);
             }
@@ -242,7 +256,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"])) {
                 $params[$param_key] = $_POST[$field] ?? "";
             }
 
-            $stmt = $db->prepare("UPDATE students SET " . implode(", ", $set_clauses) . " WHERE id = :id");
+            $stmt = $db->prepare("UPDATE records SET " . implode(", ", $set_clauses) . " WHERE id = :id");
             foreach ($params as $key => $val) {
                 $type = ($key === ":id") ? SQLITE3_INTEGER : SQLITE3_TEXT;
                 $stmt->bindValue($key, $val, $type);
@@ -259,19 +273,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["action"])) {
 $edit_data = null;
 if (isset($_GET["action"]) && $_GET["action"] === "edit" && isset($_GET["id"])) {
     $edit_id = (int)$_GET["id"];
-    $stmt = $db->prepare("SELECT * FROM students WHERE id = :id");
+    $stmt = $db->prepare("SELECT * FROM records WHERE id = :id");
     $stmt->bindValue(":id", $edit_id, SQLITE3_INTEGER);
     $edit_data = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
 }
 
-$results = $db->query("SELECT * FROM students ORDER BY id ASC");
+$results = $db->query("SELECT * FROM records ORDER BY id ASC");
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Management System</title>
+    <title><?= htmlspecialchars($SYSTEM_NAME, ENT_QUOTES, "UTF-8") ?></title>
     <style>
         body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
@@ -329,7 +343,7 @@ $results = $db->query("SELECT * FROM students ORDER BY id ASC");
             ?>
             <img src="<?= $logo_src ?>" alt="Logo">
         <?php endif; ?>
-        <h2>Student Management System</h2>
+        <h2><?= htmlspecialchars($SYSTEM_NAME, ENT_QUOTES, "UTF-8") ?></h2>
     </div>
 </div>
 
@@ -339,7 +353,7 @@ $results = $db->query("SELECT * FROM students ORDER BY id ASC");
 
 <div class="main-layout">
     <div class="card-form">
-        <h3><?= $edit_data ? "Edit Student Record" : "Add New Student" ?></h3>
+        <h3><?= $edit_data ? "Edit Record" : "Add New Record" ?></h3>
         <form method="POST" enctype="multipart/form-data">
             <input type="hidden" name="action" value="<?= $edit_data ? "update" : "create" ?>">
             <?php if ($edit_data): ?>
@@ -372,7 +386,7 @@ $results = $db->query("SELECT * FROM students ORDER BY id ASC");
             </div>
             <?php endforeach; ?>
 
-            <button type="submit" class="btn-submit"><?= $edit_data ? "Update Student Record" : "Save Record" ?></button>
+            <button type="submit" class="btn-submit"><?= $edit_data ? "Update Record" : "Save Record" ?></button>
             <?php if ($edit_data): ?>
                 <a href="index.php" class="btn-cancel">Cancel Edit</a>
             <?php endif; ?>
@@ -381,7 +395,7 @@ $results = $db->query("SELECT * FROM students ORDER BY id ASC");
     
     <div class="card-table">
         <div class="table-header">
-            <h3 style="margin:0;">Student Records</h3>
+            <h3 style="margin:0;">System Records</h3>
             <a href="index.php?action=export" class="btn-export">📊 Export (.XLS Excel)</a>
         </div>
         
@@ -454,16 +468,18 @@ function previewAvatarUrl(url) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Create Index & Database</title>
+    <title>Dynamic System Builder</title>
     <style>
         body { font-family: sans-serif; background: #f4f6f8; padding: 30px; }
         .container { max-width: 850px; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .builder-grid { display: flex; gap: 20px; margin-top: 20px; }
-        .left-col { flex: 1; border: 2px dashed #bbb; padding: 20px; text-align: center; border-radius: 6px; background: #fafafa; }
+        .left-col { flex: 1; border: 2px dashed #bbb; padding: 20px; border-radius: 6px; background: #fafafa; }
         .right-col { flex: 2; }
-        .field-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
         input[type="text"], input[type="file"], input[type="url"] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        .preview-img { max-width: 100%; max-height: 120px; margin-top: 10px; display: none; border-radius: 4px; border: 1px solid #ddd; }
+        .field-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .preview-img { max-width: 100%; max-height: 100px; margin-top: 10px; display: none; border-radius: 4px; border: 1px solid #ddd; }
         .btn-add { background: #17a2b8; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
         .btn-remove { background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
         .btn-done { background: #28a745; color: white; border: none; width: 100%; padding: 14px; font-size: 18px; font-weight: bold; border-radius: 4px; margin-top: 20px; cursor: pointer; }
@@ -474,10 +490,16 @@ function previewAvatarUrl(url) {
     <h2>Dynamic System Builder</h2>
     <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="action_builder" value="1">
+        
+        <div class="form-group">
+            <label>System / Project Name</label>
+            <input type="text" name="system_name" placeholder="e.g. Employee Directory, Student Management System, Warehouse Inventory" required>
+        </div>
+
         <div class="builder-grid">
             <div class="left-col">
-                <h3>System Logo / Header</h3>
-                <p style="color:#666; font-size: 13px;">Optional logo for your system header.</p>
+                <h3>System Logo</h3>
+                <p style="color:#666; font-size: 13px;">Optional logo for header banner.</p>
                 
                 <div style="margin-bottom: 10px;">
                     <input type="file" name="system_logo" accept="image/*" onchange="previewImageFile(this)">
@@ -493,14 +515,14 @@ function previewAvatarUrl(url) {
                 <h3>Custom Dynamic Fields</h3>
                 <div id="dynamic-fields">
                     <div class="field-row">
-                        <input type="text" name="fields[]" placeholder="Field Name (e.g. ឈ្មោះ, Full Name, 年齡)" required>
+                        <input type="text" name="fields[]" placeholder="Field Name (e.g. Full Name, Age, Position)" required>
                         <button type="button" class="btn-remove" onclick="removeRow(this)">Remove</button>
                     </div>
                 </div>
                 <button type="button" class="btn-add" onclick="addRow()">+ Add Field</button>
             </div>
         </div>
-        <button type="submit" class="btn-done">Done (Build database.db & index.php)</button>
+        <button type="submit" class="btn-done">Done (Build Database & Index)</button>
     </form>
 </div>
 
