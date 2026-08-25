@@ -88,7 +88,14 @@ function removeImageFile($path) {
 
 // ---------------- Handle EXCEL (.xls) EXPORT ----------------
 if (isset($_GET["action"]) && $_GET["action"] === "export") {
-    $filename = "export_" . date("Y-m-d_H-i-s") . ".xls";
+    // Sanitize system name for safe filename usage
+    $clean_sys_name = preg_replace("/[^a-zA-Z0-9_\-]/", "_", $SYSTEM_NAME);
+    $clean_sys_name = trim(preg_replace("/_+/", "_", $clean_sys_name), "_");
+    if (empty($clean_sys_name)) {
+        $clean_sys_name = "System";
+    }
+
+    $filename = $clean_sys_name . "_export_" . date("Y-m-d_H-i-s") . ".xls";
     
     header("Content-Type: application/vnd.ms-excel; charset=utf-8");
     header("Content-Disposition: attachment; filename=" . $filename);
